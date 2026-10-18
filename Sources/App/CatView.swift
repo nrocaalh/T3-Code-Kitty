@@ -193,7 +193,8 @@ struct CatSurface: NSViewRepresentable {
 final class CatNSView: NSView {
     weak var model: CatModel?
     private var renderTask: Task<Void, Never>?
-    private var occlusionObserver: NSObjectProtocol?
+    // NSView is deallocated on the main thread only; deinit needs access.
+    nonisolated(unsafe) private var occlusionObserver: (any NSObjectProtocol)?
     private var startedAt = CACurrentMediaTime()
     private var badgeCache: [String: NSImage] = [:]
     private var generatedCache: [String: NSImage?] = [:]
