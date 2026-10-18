@@ -12,7 +12,7 @@ final class DirMonitor: @unchecked Sendable {
 
     // Non-capturing C function pointer; context carries an unretained self.
     private let callback: FSEventStreamCallback = { _, info, numEvents, eventPaths, _, _ in
-        guard numEvents > 0 else { return }
+        guard let info, numEvents > 0 else { return }
         let monitor = Unmanaged<DirMonitor>.fromOpaque(info).takeUnretainedValue()
         let paths = unsafeBitCast(eventPaths, to: CFArray.self) as? [String] ?? []
         guard !paths.isEmpty else { return }
