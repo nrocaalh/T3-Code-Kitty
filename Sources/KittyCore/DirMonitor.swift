@@ -12,7 +12,7 @@ final class DirMonitor: @unchecked Sendable {
 
     // Non-capturing C function pointer; context carries an unretained self.
     private let callback: FSEventStreamCallback = { _, info, numEvents, eventPaths, _, _ in
-        guard let info, numEvents > 0, let eventPaths else { return }
+        guard numEvents > 0 else { return }
         let monitor = Unmanaged<DirMonitor>.fromOpaque(info).takeUnretainedValue()
         let paths = unsafeBitCast(eventPaths, to: CFArray.self) as? [String] ?? []
         guard !paths.isEmpty else { return }
@@ -51,12 +51,6 @@ final class DirMonitor: @unchecked Sendable {
             FSEventStreamInvalidate(stream)
             FSEventStreamRelease(stream)
         }
-    }
-
-    func restartIfNeeded() {
-        guard let stream, !FSEventStreamIsRunning(stream) else { return }
-        if FSEventStreamStart(stream) { return }
-        KittyLog.write("FSEvents stream failed to restart; slow timer keeps watching")
     }
 
     private func deliver(_ paths: [String]) {
