@@ -12,6 +12,13 @@
     <string>AppIcon.icns</string>
     <key>CFBundleIdentifier</key>
     <string>com.t3codekitty.app</string>
+    <key>CFBundleDevelopmentRegion</key>
+    <string>es</string>
+    <key>CFBundleLocalizations</key>
+    <array>
+        <string>es</string>
+        <string>en</string>
+    </array>
     <key>CFBundleInfoDictionaryVersion</key>
     <string>6.0</string>
     <key>CFBundlePackageType</key>

@@ -12,6 +12,7 @@ enum CatMood {
 
 struct CatView: View {
     @ObservedObject var model: CatModel
+    @ObservedObject private var l10n = L10n.shared
 
     private let panelWidth: CGFloat = 260
     private let panelHeight: CGFloat = 280
@@ -31,12 +32,12 @@ struct CatView: View {
                         headline: model.bubbleHeadline,
                         subtitle: model.bubbleSubtitle,
                         count: model.unreviewedReview.count,
-                        runningCount: model.runningCount
+                        followLine: model.runningCount > 0 ? l10n.p("bubble.follow", model.runningCount) : nil
                     )
                     .onTapGesture { model.bubbleTapped() }
                     .transition(.scale(scale: 0.88, anchor: .bottom).combined(with: .opacity))
                 } else if model.showWorkingPill {
-                    WorkingPill(count: model.runningCount)
+                    WorkingPill(label: l10n.p("status.working", model.runningCount))
                         .onTapGesture { model.catTapped() }
                         .transition(.scale(scale: 0.9, anchor: .bottom).combined(with: .opacity))
                 }
@@ -57,7 +58,7 @@ struct BubbleView: View {
     let headline: String
     let subtitle: String?
     let count: Int
-    let runningCount: Int
+    let followLine: String?
 
     private let bubbleColor = Color(red: 0.13, green: 0.11, blue: 0.16).opacity(0.95)
 
@@ -85,12 +86,12 @@ struct BubbleView: View {
                             .lineLimit(1)
                             .truncationMode(.tail)
                     }
-                    if runningCount > 0 {
+                    if let followLine {
                         HStack(spacing: 4) {
                             Circle()
                                 .fill(Color(red: 0.36, green: 0.58, blue: 1.0))
                                 .frame(width: 5, height: 5)
-                            Text(runningCount == 1 ? "1 sesión sigue trabajando" : "\(runningCount) sesiones siguen trabajando")
+                            Text(followLine)
                                 .font(.system(size: 9.5, weight: .medium, design: .rounded))
                                 .foregroundStyle(.white.opacity(0.55))
                                 .lineLimit(1)
@@ -122,7 +123,7 @@ struct BubbleView: View {
 }
 
 struct WorkingPill: View {
-    let count: Int
+    let label: String
     @State private var pulse = false
 
     var body: some View {
@@ -134,7 +135,7 @@ struct WorkingPill: View {
                 .scaleEffect(pulse ? 1.0 : 0.72)
                 .animation(.easeInOut(duration: 0.75).repeatForever(autoreverses: true), value: pulse)
                 .onAppear { pulse = true }
-            Text(count == 1 ? "1 trabajando" : "\(count) trabajando")
+            Text(label)
                 .font(.system(size: 11.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white.opacity(0.92))
         }

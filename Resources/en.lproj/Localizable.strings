@@ -1,0 +1,29 @@
+/* T3 Code Kitty – English */
+
+"status.closed" = "T3 Code is not running";
+"status.waiting" = "Waiting for T3 Code data…";
+"status.allgood" = "All caught up";
+"status.working.one" = "1 working";
+"status.working.other" = "%d working";
+"status.review.one" = "1 to review";
+"status.review.other" = "%d to review";
+
+"bubble.review.one" = "1 session to review";
+"bubble.review.other" = "%d sessions to review";
+"bubble.open" = "Click to open T3 Code";
+"bubble.follow.one" = "1 session is still working";
+"bubble.follow.other" = "%d sessions are still working";
+
+"menu.open" = "Open T3 Code";
+"menu.pending" = "Sessions to review";
+"menu.reviewed" = "Reviewed (%d)";
+"menu.mute" = "Mute bubble for 15 min";
+"menu.unmute" = "Show bubble now";
+"menu.alerts" = "Alerts";
+"menu.sound" = "Sound";
+"menu.language" = "Language";
+"menu.login" = "Launch at login";
+"menu.resetPos" = "Reset position";
+"menu.refresh" = "Refresh now";
+"menu.quit" = "Quit T3 Code Kitty";
+"activity.reason" = "Show T3 Code status on the desktop";

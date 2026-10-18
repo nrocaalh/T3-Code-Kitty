@@ -27,9 +27,9 @@ Requiere Xcode command line tools. Instala la app en `~/Applications/T3CodeKitty
 
 ## Uso
 
-- Barra de menú (icono de huella): estado, sesiones pendientes, abrir T3 Code, silencio de avisos/sonido, inicio con sesión de macOS.
+- Barra de menú (icono de huella): estado, sesiones pendientes, abrir T3 Code, silencio de avisos/sonido, idioma (ES/EN), inicio con sesión de macOS.
 - El panel se puede arrastrar con el ratón y recuerda su posición.
-- Interfaz en español por diseño.
+- Idiomas: español e inglés; sigue el idioma del sistema y se puede cambiar desde el menú (Idioma / Language).
 
 ## Estructura
 

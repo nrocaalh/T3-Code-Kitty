@@ -49,8 +49,7 @@ final class CatModel: ObservableObject {
     }
 
     var bubbleHeadline: String {
-        let list = unreviewedReview
-        return list.count == 1 ? "1 sesión para revisar" : "\(list.count) sesiones para revisar"
+        L10n.shared.p("bubble.review", unreviewedReview.count)
     }
 
     var bubbleSubtitle: String? {
@@ -60,19 +59,20 @@ final class CatModel: ObservableObject {
             let project = first.projectTitle.isEmpty ? "" : "\(first.projectTitle) · "
             return shorten(project + first.title, limit: 46)
         }
-        return "Toca para abrir T3 Code"
+        return L10n.shared.t("bubble.open")
     }
 
     var statusLine: String {
-        guard t3Running else { return "T3 Code está cerrado" }
-        guard hasSnapshot else { return "Esperando datos de T3 Code…" }
+        let l = L10n.shared
+        guard t3Running else { return l.t("status.closed") }
+        guard hasSnapshot else { return l.t("status.waiting") }
         let pending = unreviewedReview
         if pending.isEmpty {
-            return runningCount > 0 ? "\(runningCount) trabajando" : "Todo al día"
+            return runningCount > 0 ? l.p("status.working", runningCount) : l.t("status.allgood")
         }
-        let reviewText = pending.count == 1 ? "1 por revisar" : "\(pending.count) por revisar"
+        let reviewText = l.p("status.review", pending.count)
         if runningCount > 0 {
-            return "\(reviewText) · \(runningCount) trabajando"
+            return "\(reviewText) · " + l.p("status.working", runningCount)
         }
         return reviewText
     }
@@ -174,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         NSApp.setActivationPolicy(.accessory)
         activity = ProcessInfo.processInfo.beginActivity(
             options: [.userInitiatedAllowingIdleSystemSleep, .suddenTerminationDisabled],
-            reason: "Mostrar el estado de T3 Code en el escritorio"
+            reason: L10n.shared.t("activity.reason")
         )
 
         createPanel()
@@ -190,13 +190,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         watcher.start()
 
         startHitTestTimer()
-        Log.write("T3 Code Kitty iniciado")
+        Log.write("T3 Code Kitty started")
         model.resetPositionIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
-        Log.write("T3 Code Kitty terminado")
+        Log.write("T3 Code Kitty stopped")
     }
 
     // MARK: Setup
@@ -350,19 +350,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        let l = L10n.shared
 
         let summary = NSMenuItem(title: model.statusLine, action: nil, keyEquivalent: "")
         summary.isEnabled = false
         menu.addItem(summary)
         menu.addItem(.separator())
 
-        let open = NSMenuItem(title: "Abrir T3 Code", action: #selector(openT3Action), keyEquivalent: "o")
+        let open = NSMenuItem(title: l.t("menu.open"), action: #selector(openT3Action), keyEquivalent: "o")
         open.target = self
         menu.addItem(open)
 
         let pending = model.unreviewedReview
         if !pending.isEmpty {
-            let parent = NSMenuItem(title: "Sesiones por revisar", action: nil, keyEquivalent: "")
+            let parent = NSMenuItem(title: l.t("menu.pending"), action: nil, keyEquivalent: "")
             let submenu = NSMenu()
             for thread in pending.prefix(8) {
                 let item = NSMenuItem(title: thread.title, action: #selector(openT3Action), keyEquivalent: "")
@@ -374,7 +375,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
             let muted = model.bubbleMutedUntil > Date()
             let mute = NSMenuItem(
-                title: muted ? "Mostrar burbuja ahora" : "Silenciar burbuja 15 min",
+                title: muted ? l.t("menu.unmute") : l.t("menu.mute"),
                 action: #selector(muteAction),
                 keyEquivalent: ""
             )
@@ -384,7 +385,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         let reviewed = model.reviewedReview
         if !reviewed.isEmpty {
-            let parent = NSMenuItem(title: "Revisadas (\(reviewed.count))", action: nil, keyEquivalent: "")
+            let parent = NSMenuItem(title: l.p("menu.reviewed", reviewed.count), action: nil, keyEquivalent: "")
             let submenu = NSMenu()
             for thread in reviewed.prefix(8) {
                 let item = NSMenuItem(title: thread.title, action: #selector(openT3Action), keyEquivalent: "")
@@ -397,39 +398,58 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         menu.addItem(.separator())
 
-        let alerts = NSMenuItem(title: "Avisos", action: #selector(toggleAlerts), keyEquivalent: "")
+        let alerts = NSMenuItem(title: l.t("menu.alerts"), action: #selector(toggleAlerts), keyEquivalent: "")
         alerts.target = self
         alerts.state = model.alertsEnabled ? .on : .off
         menu.addItem(alerts)
 
-        let sound = NSMenuItem(title: "Sonido", action: #selector(toggleSound), keyEquivalent: "")
+        let sound = NSMenuItem(title: l.t("menu.sound"), action: #selector(toggleSound), keyEquivalent: "")
         sound.target = self
         sound.state = model.soundEnabled ? .on : .off
         menu.addItem(sound)
 
-        let login = NSMenuItem(title: "Abrir al iniciar sesión", action: #selector(toggleLoginItem), keyEquivalent: "")
+        let langParent = NSMenuItem(title: l.t("menu.language"), action: nil, keyEquivalent: "")
+        let langMenu = NSMenu()
+        for lang in AppLanguage.allCases {
+            let item = NSMenuItem(title: lang == .es ? "Español" : "English", action: #selector(selectLanguage(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = lang.rawValue
+            item.state = L10n.shared.language == lang ? .on : .off
+            langMenu.addItem(item)
+        }
+        langParent.submenu = langMenu
+        menu.addItem(langParent)
+
+        let login = NSMenuItem(title: l.t("menu.login"), action: #selector(toggleLoginItem), keyEquivalent: "")
         login.target = self
         login.state = loginItemInstalled ? .on : .off
         menu.addItem(login)
 
         menu.addItem(.separator())
 
-        let reset = NSMenuItem(title: "Reiniciar posición", action: #selector(resetPosition), keyEquivalent: "")
+        let reset = NSMenuItem(title: l.t("menu.resetPos"), action: #selector(resetPosition), keyEquivalent: "")
         reset.target = self
         menu.addItem(reset)
 
-        let refresh = NSMenuItem(title: "Actualizar ahora", action: #selector(refreshAction), keyEquivalent: "r")
+        let refresh = NSMenuItem(title: l.t("menu.refresh"), action: #selector(refreshAction), keyEquivalent: "r")
         refresh.target = self
         menu.addItem(refresh)
 
         menu.addItem(.separator())
 
-        let quit = NSMenuItem(title: "Salir de T3 Code Kitty", action: #selector(quitAction), keyEquivalent: "q")
+        let quit = NSMenuItem(title: l.t("menu.quit"), action: #selector(quitAction), keyEquivalent: "q")
         quit.target = self
         menu.addItem(quit)
     }
 
     // MARK: Actions
+
+    @objc private func selectLanguage(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let lang = AppLanguage(rawValue: raw) else { return }
+        L10n.shared.language = lang
+        model.objectWillChange.send()
+        updateStatusItem()
+    }
 
     @objc private func openT3Action() { openT3() }
     @objc private func refreshAction() { watcher.refreshNow() }
@@ -464,7 +484,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
-            if let error { Log.write("No se pudo abrir T3 Code: \(error.localizedDescription)") }
+            if let error { Log.write("Failed to open T3 Code: \(error.localizedDescription)") }
         }
     }
 
@@ -499,9 +519,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             )
             let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
             try data.write(to: agentURL)
-            Log.write("Login item instalado")
+            Log.write("Login item installed")
         } catch {
-            Log.write("No se pudo instalar el login item: \(error.localizedDescription)")
+            Log.write("Failed to install login item: \(error.localizedDescription)")
         }
     }
 }

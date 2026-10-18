@@ -16,10 +16,14 @@ swiftc \
   -framework AppKit \
   -framework SwiftUI \
   -framework Combine \
-  Sources/T3Watcher.swift Sources/CatView.swift Sources/main.swift \
+  Sources/T3Watcher.swift Sources/CatView.swift Sources/main.swift Sources/Localization.swift \
   -o "$BUNDLE/Contents/MacOS/${APP_NAME}"
 
 cp Info.plist "$BUNDLE/Contents/Info.plist"
+for lang in es en; do
+  mkdir -p "$BUNDLE/Contents/Resources/${lang}.lproj"
+  cp "Resources/${lang}.lproj/Localizable.strings" "$BUNDLE/Contents/Resources/${lang}.lproj/"
+done
 cp Assets/AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
 for asset in cat_idle cat_working cat_alert cat_sleep; do
   cp "Assets/${asset}.png" "$BUNDLE/Contents/Resources/${asset}.png"

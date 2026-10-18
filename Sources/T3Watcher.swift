@@ -359,7 +359,7 @@ final class T3Watcher {
                 let projectId = thread["projectId"] as? String ?? ""
                 threads.append(T3Thread(
                     id: id,
-                    title: clean(thread["title"] as? String ?? "Sesión"),
+                    title: clean(thread["title"] as? String ?? "Session"),
                     projectTitle: projects[projectId] ?? "",
                     status: session["status"] as? String ?? "stopped",
                     settled: thread["settledAt"] is String,
