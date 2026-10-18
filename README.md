@@ -21,11 +21,14 @@ Reads the local T3 Code cache (IndexedDB/LevelDB in `~/Library/Application Suppo
 
 ## Build
 
+Requires Xcode 16+ (Swift 6 toolchain) and command line tools.
+
 ```sh
-./build.sh
+swift test    # unit tests for the parsing core
+./build.sh    # build the app bundle and install it
 ```
 
-Requires Xcode command line tools. Installs the app to `~/Applications/T3CodeKitty.app` (ad-hoc signed, no sandbox).
+Installs the app to `~/Applications/T3CodeKitty.app` (ad-hoc signed, no sandbox). CI (`.github/workflows/ci.yml`) runs tests + build on every push.
 
 ## Usage
 

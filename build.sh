@@ -4,21 +4,13 @@ cd "$(dirname "$0")"
 
 APP_NAME="T3CodeKitty"
 BUNDLE="build/${APP_NAME}.app"
-ARCH="$(uname -m)"
+
+swift build -c release
 
 rm -rf "$BUNDLE"
 mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 
-swiftc \
-  -O \
-  -swift-version 5 \
-  -target "${ARCH}-apple-macos14.0" \
-  -framework AppKit \
-  -framework SwiftUI \
-  -framework Combine \
-  Sources/T3Watcher.swift Sources/CatView.swift Sources/main.swift Sources/Localization.swift \
-  -o "$BUNDLE/Contents/MacOS/${APP_NAME}"
-
+cp ".build/release/${APP_NAME}" "$BUNDLE/Contents/MacOS/${APP_NAME}"
 cp Info.plist "$BUNDLE/Contents/Info.plist"
 for lang in es en; do
   mkdir -p "$BUNDLE/Contents/Resources/${lang}.lproj"
@@ -34,4 +26,4 @@ mkdir -p "$HOME/Applications"
 rm -rf "$HOME/Applications/${APP_NAME}.app"
 cp -R "$BUNDLE" "$HOME/Applications/${APP_NAME}.app"
 
-echo "Instalado en: $HOME/Applications/${APP_NAME}.app"
+echo "Installed at: $HOME/Applications/${APP_NAME}.app"

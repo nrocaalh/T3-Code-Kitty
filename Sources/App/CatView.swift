@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import QuartzCore
+import KittyCore
 
 enum CatMood {
     case sleeping
@@ -10,6 +11,7 @@ enum CatMood {
     case alert
 }
 
+@MainActor
 struct CatView: View {
     @ObservedObject var model: CatModel
     @ObservedObject private var l10n = L10n.shared
@@ -54,6 +56,7 @@ struct CatView: View {
 
 // MARK: - Bubble
 
+@MainActor
 struct BubbleView: View {
     let headline: String
     let subtitle: String?
@@ -122,6 +125,7 @@ struct BubbleView: View {
     }
 }
 
+@MainActor
 struct WorkingPill: View {
     let label: String
     @State private var pulse = false
@@ -151,6 +155,8 @@ struct WorkingPill: View {
         )
         .shadow(color: .black.opacity(0.25), radius: 7, y: 3)
         .contentShape(Capsule())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(label)
     }
 }
 
@@ -186,7 +192,7 @@ struct CatSurface: NSViewRepresentable {
 
 final class CatNSView: NSView {
     weak var model: CatModel?
-    private var timer: Timer?
+    private var renderTask: Task<Void, Never>?
     private var startedAt = CACurrentMediaTime()
     private var badgeCache: [String: NSImage] = [:]
     private var generatedCache: [String: NSImage?] = [:]
@@ -217,25 +223,56 @@ final class CatNSView: NSView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    // MARK: Accessibility
+
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? {
+        let status = model?.statusLine ?? ""
+        return status.isEmpty ? L10n.shared.t("a11y.cat.label") : "\(L10n.shared.t("a11y.cat.label")): \(status)"
+    }
+    override func accessibilityHelp() -> String? { L10n.shared.t("a11y.cat.help") }
+    override func accessibilityPerformPress() -> Bool {
+        model?.catTapped()
+        return true
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil {
-            timer?.invalidate()
-            timer = nil
+            stopRenderLoop()
         } else {
-            startTimer()
+            startRenderLoop()
+        }
+    }
+
+    override func viewDidChangeOcclusionState() {
+        super.viewDidChangeOcclusionState()
+        if let window, window.occlusionState.contains(.visible) {
+            startRenderLoop()
+        } else {
+            stopRenderLoop()
         }
     }
 
     deinit {
-        timer?.invalidate()
+        renderTask?.cancel()
     }
 
-    private func startTimer() {
-        guard timer == nil else { return }
-        let timer = Timer(timeInterval: 1.0 / 15.0, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                guard let self else { return }
+    private func stopRenderLoop() {
+        renderTask?.cancel()
+        renderTask = nil
+    }
+
+    private func startRenderLoop() {
+        stopRenderLoop()
+        guard window?.occlusionState.contains(.visible) == true else { return }
+        renderTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                guard let self, self.window?.occlusionState.contains(.visible) == true else {
+                    self?.renderTask = nil
+                    return
+                }
                 self.tickCount += 1
                 let mood = self.model?.mood(at: Date()) ?? .idle
                 let every: Int
@@ -247,10 +284,11 @@ final class CatNSView: NSView {
                 if self.tickCount % every == 0 {
                     self.needsDisplay = true
                 }
+                let reduceMotion = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+                let period: UInt64 = reduceMotion ? 500_000_000 : 66_666_667 * UInt64(every)
+                try? await Task.sleep(nanoseconds: period)
             }
         }
-        RunLoop.main.add(timer, forMode: .common)
-        self.timer = timer
     }
 
     // MARK: Mouse / drag

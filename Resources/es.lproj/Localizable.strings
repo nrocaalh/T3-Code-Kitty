@@ -27,3 +27,6 @@
 "menu.refresh" = "Actualizar ahora";
 "menu.quit" = "Salir de T3 Code Kitty";
 "activity.reason" = "Mostrar el estado de T3 Code en el escritorio";
+
+"a11y.cat.label" = "T3 Code Kitty";
+"a11y.cat.help" = "Púlsalo para abrir T3 Code y descartar avisos. Arrástralo con el ratón para mover el gato.";

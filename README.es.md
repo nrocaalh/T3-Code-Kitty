@@ -21,11 +21,14 @@ Lee en **solo lectura** la caché local de T3 Code (IndexedDB/LevelDB en `~/Libr
 
 ## Construir
 
+Requiere Xcode 16+ (herramientas Swift 6).
+
 ```sh
-./build.sh
+swift test    # tests unitarios del núcleo de parseo
+./build.sh    # compila el bundle y lo instala
 ```
 
-Requiere Xcode command line tools. Instala la app en `~/Applications/T3CodeKitty.app` (firmada ad-hoc, sin sandbox).
+Instala la app en `~/Applications/T3CodeKitty.app` (firmada ad-hoc, sin sandbox). El CI (`.github/workflows/ci.yml`) ejecuta tests + build en cada push.
 
 ## Uso
 

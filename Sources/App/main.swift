@@ -2,6 +2,7 @@ import AppKit
 import SwiftUI
 import Combine
 import ServiceManagement
+import KittyCore
 
 // MARK: - Model
 
@@ -15,26 +16,26 @@ final class CatModel: ObservableObject {
     @Published var finishingUntil = Date.distantPast
     @Published var bubbleMutedUntil = Date.distantPast
     @Published var acknowledgedKeys: Set<String> {
-        didSet { UserDefaults.standard.set(Array(acknowledgedKeys), forKey: "acknowledgedReviewKeys") }
+        didSet { UserDefaults.standard.set(Array(acknowledgedKeys), forKey: KittyDefaults.acknowledgedReviewKeys) }
     }
     @Published var alertsEnabled: Bool {
-        didSet { UserDefaults.standard.set(alertsEnabled, forKey: "alertsEnabled") }
+        didSet { UserDefaults.standard.set(alertsEnabled, forKey: KittyDefaults.alertsEnabled) }
     }
     @Published var soundEnabled: Bool {
-        didSet { UserDefaults.standard.set(soundEnabled, forKey: "soundEnabled") }
+        didSet { UserDefaults.standard.set(soundEnabled, forKey: KittyDefaults.soundEnabled) }
     }
 
     weak var panel: NSPanel?
-    var openT3: (() -> Void)?
-    var refreshHandler: (() -> Void)?
+    var openT3: (@MainActor () -> Void)?
+    var refreshHandler: (@MainActor () -> Void)?
 
     init() {
         let defaults = UserDefaults.standard
-        alertsEnabled = defaults.object(forKey: "alertsEnabled") as? Bool ?? true
-        soundEnabled = defaults.object(forKey: "soundEnabled") as? Bool ?? true
-        acknowledgedKeys = Set(defaults.stringArray(forKey: "acknowledgedReviewKeys") ?? [])
-        defaults.removeObject(forKey: "acknowledgementUntil")
-        defaults.removeObject(forKey: "reviewedEpisodes")
+        alertsEnabled = defaults.object(forKey: KittyDefaults.alertsEnabled) as? Bool ?? true
+        soundEnabled = defaults.object(forKey: KittyDefaults.soundEnabled) as? Bool ?? true
+        acknowledgedKeys = Set(defaults.stringArray(forKey: KittyDefaults.acknowledgedReviewKeys) ?? [])
+        defaults.removeObject(forKey: KittyDefaults.legacyAcknowledgementUntil)
+        defaults.removeObject(forKey: KittyDefaults.legacyReviewedEpisodes)
     }
 
     var unreviewedReview: [T3Thread] {
@@ -129,8 +130,8 @@ final class CatModel: ObservableObject {
     func savePosition() {
         guard let panel else { return }
         let origin = panel.frame.origin
-        UserDefaults.standard.set(origin.x, forKey: "catX")
-        UserDefaults.standard.set(origin.y, forKey: "catY")
+        UserDefaults.standard.set(origin.x, forKey: KittyDefaults.catX)
+        UserDefaults.standard.set(origin.y, forKey: KittyDefaults.catY)
     }
 
     func resetPosition() {
@@ -163,7 +164,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var panel: CatPanel!
     private var statusItem: NSStatusItem!
     private var watcher: T3Watcher!
-    private var hitTimer: Timer?
+    private var hitTestTask: Task<Void, Never>?
     private var activity: NSObjectProtocol?
     private var didLoadSnapshot = false
     private var previousUnreviewedKeys = Set<String>()
@@ -180,25 +181,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         createPanel()
         createStatusItem()
-        model.refreshHandler = { [weak self] in self?.watcher.refreshNow() }
 
         watcher = T3Watcher()
-        watcher.onUpdate = { [weak self] snapshot in
-            MainActor.assumeIsolated {
-                self?.apply(snapshot)
-            }
+        model.refreshHandler = { [weak self] in
+            guard let watcher = self?.watcher else { return }
+            Task { await watcher.refreshNow() }
         }
-        watcher.start()
+        let startedWatcher = watcher
+        Task {
+            await startedWatcher.start(onUpdate: { [weak self] snapshot in
+                Task { @MainActor [weak self] in self?.apply(snapshot) }
+            })
+        }
 
         startHitTestTimer()
         removeLegacyLoginItem()
-        Log.write("T3 Code Kitty started")
+        KittyLog.write("T3 Code Kitty started")
         model.resetPositionIfNeeded()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
         if let activity { ProcessInfo.processInfo.endActivity(activity) }
-        Log.write("T3 Code Kitty stopped")
+        KittyLog.write("T3 Code Kitty stopped")
     }
 
     // MARK: Setup
@@ -243,13 +247,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func startHitTestTimer() {
-        let timer = Timer(timeInterval: 0.1, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated {
-                self?.updateHitTest()
+        hitTestTask?.cancel()
+        hitTestTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                do {
+                    try await Task.sleep(nanoseconds: 100_000_000)
+                } catch {
+                    return
+                }
+                guard let self else { return }
+                self.updateHitTest()
             }
         }
-        RunLoop.main.add(timer, forMode: .common)
-        hitTimer = timer
     }
 
     private func updateHitTest() {
@@ -327,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             }
         }
 
-        Log.write("apply seq=\(snapshot.sequence) review=\(review.count) pending=\(model.unreviewedReview.count) running=\(runningThreads.count) t3=\(running)")
+        KittyLog.write("apply seq=\(snapshot.sequence) review=\(review.count) pending=\(model.unreviewedReview.count) running=\(runningThreads.count) t3=\(running)")
         updateStatusItem()
     }
 
@@ -454,7 +463,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func openT3Action() { openT3() }
-    @objc private func refreshAction() { watcher.refreshNow() }
+    @objc private func refreshAction() {
+        let watcher = self.watcher
+        Task { await watcher.refreshNow() }
+    }
 
     @objc private func muteAction() {
         if model.bubbleMutedUntil > Date() {
@@ -481,13 +493,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private func openT3() {
-        let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: t3BundleID)
-            ?? URL(fileURLWithPath: "/Applications/T3 Code (Alpha).app")
+        if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: t3BundleID) {
+            let configuration = NSWorkspace.OpenConfiguration()
+            configuration.activates = true
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+                if let error { kittyOpenFailure(error) }
+            }
+            return
+        }
+        // Fall back to the registered URL scheme before any hardcoded path.
+        if let scheme = URL(string: "t3code://"), NSWorkspace.shared.open(scheme) { return }
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
-            if let error { Log.write("Failed to open T3 Code: \(error.localizedDescription)") }
+        let fallback = URL(fileURLWithPath: "/Applications/T3 Code (Alpha).app")
+        NSWorkspace.shared.openApplication(at: fallback, configuration: configuration) { _, error in
+            if let error { kittyOpenFailure(error) }
         }
+    }
+
+    private func kittyOpenFailure(_ error: Error) {
+        KittyLog.write("Failed to open T3 Code: \(error.localizedDescription)")
     }
 
     // MARK: Login item
@@ -504,21 +529,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func removeLegacyLoginItem() {
         guard FileManager.default.fileExists(atPath: agentURL.path) else { return }
         try? FileManager.default.removeItem(at: agentURL)
-        Log.write("Removed legacy LaunchAgent login item")
+        KittyLog.write("Removed legacy LaunchAgent login item")
     }
 
     @objc private func toggleLoginItem() {
         do {
             if loginItemInstalled {
                 try SMAppService.mainApp.unregister()
-                Log.write("Login item removed")
+                KittyLog.write("Login item removed")
             } else {
                 removeLegacyLoginItem()
                 try SMAppService.mainApp.register()
-                Log.write("Login item installed")
+                KittyLog.write("Login item installed")
             }
         } catch {
-            Log.write("Failed to toggle login item: \(error.localizedDescription)")
+            KittyLog.write("Failed to toggle login item: \(error.localizedDescription)")
         }
     }
 }
@@ -528,10 +553,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 extension CatModel {
     func savedOrigin(size: NSSize) -> CGPoint {
         let defaults = UserDefaults.standard
-        if defaults.object(forKey: "catX") != nil, defaults.object(forKey: "catY") != nil {
+        if defaults.object(forKey: KittyDefaults.catX) != nil, defaults.object(forKey: KittyDefaults.catY) != nil {
             let point = CGPoint(
-                x: defaults.double(forKey: "catX"),
-                y: defaults.double(forKey: "catY")
+                x: defaults.double(forKey: KittyDefaults.catX),
+                y: defaults.double(forKey: KittyDefaults.catY)
             )
             let rect = CGRect(origin: point, size: size)
             if NSScreen.screens.contains(where: { $0.visibleFrame.intersects(rect) }) {
@@ -555,37 +580,10 @@ extension CatModel {
     }
 }
 
-enum Log {
-    private static let url = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Logs/T3CodeKitty.log")
-    private static let queue = DispatchQueue(label: "com.t3codekitty.app.log")
-    private static let formatter: DateFormatter = {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM-dd HH:mm:ss"
-        return formatter
-    }()
-
-    static func write(_ message: String) {
-        queue.async {
-            let line = "[\(formatter.string(from: Date()))] \(message)\n"
-            guard let data = line.data(using: .utf8) else { return }
-            if let handle = try? FileHandle(forWritingTo: url) {
-                defer { try? handle.close() }
-                _ = try? handle.seekToEnd()
-                try? handle.write(contentsOf: data)
-            } else {
-                try? data.write(to: url)
-            }
-        }
-    }
-}
-
 // MARK: - Entry point
 
-MainActor.assumeIsolated {
-    let application = NSApplication.shared
-    let delegate = AppDelegate()
-    application.delegate = delegate
-    application.setActivationPolicy(.accessory)
-    application.run()
-}
+let application = NSApplication.shared
+let delegate = AppDelegate()
+application.delegate = delegate
+application.setActivationPolicy(.accessory)
+application.run()

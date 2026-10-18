@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import KittyCore
 
 enum AppLanguage: String, CaseIterable {
     case es
@@ -12,7 +13,7 @@ final class L10n: ObservableObject {
 
     @Published var language: AppLanguage {
         didSet {
-            UserDefaults.standard.set(language.rawValue, forKey: "appLanguage")
+            UserDefaults.standard.set(language.rawValue, forKey: KittyDefaults.appLanguage)
             current = L10n.bundle(for: language) ?? fallback
         }
     }
@@ -23,7 +24,7 @@ final class L10n: ObservableObject {
     private init() {
         fallback = Bundle.main
         let defaults = UserDefaults.standard
-        let stored = defaults.string(forKey: "appLanguage").flatMap(AppLanguage.init(rawValue:))
+        let stored = defaults.string(forKey: KittyDefaults.appLanguage).flatMap(AppLanguage.init(rawValue:))
         let resolved = stored ?? L10n.systemLanguage()
         language = resolved
         current = L10n.bundle(for: resolved) ?? fallback
