@@ -188,10 +188,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             Task { await watcher.refreshNow() }
         }
         let startedWatcher = watcher
-        Task {
-            await startedWatcher.start(onUpdate: { [weak self] snapshot in
-                Task { @MainActor [weak self] in self?.apply(snapshot) }
-            })
+        if let startedWatcher {
+            Task {
+                await startedWatcher.start(onUpdate: { [weak self] snapshot in
+                    Task { @MainActor [weak self] in self?.apply(snapshot) }
+                })
+            }
         }
 
         startHitTestTimer()
@@ -464,7 +466,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openT3Action() { openT3() }
     @objc private func refreshAction() {
-        let watcher = self.watcher
+        guard let watcher else { return }
         Task { await watcher.refreshNow() }
     }
 
@@ -496,8 +498,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: t3BundleID) {
             let configuration = NSWorkspace.OpenConfiguration()
             configuration.activates = true
-            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
-                if let error { kittyOpenFailure(error) }
+            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
+                if let error { self?.kittyOpenFailure(error) }
             }
             return
         }
@@ -506,8 +508,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
         let fallback = URL(fileURLWithPath: "/Applications/T3 Code (Alpha).app")
-        NSWorkspace.shared.openApplication(at: fallback, configuration: configuration) { _, error in
-            if let error { kittyOpenFailure(error) }
+        NSWorkspace.shared.openApplication(at: fallback, configuration: configuration) { [weak self] _, error in
+            if let error { self?.kittyOpenFailure(error) }
         }
     }
 

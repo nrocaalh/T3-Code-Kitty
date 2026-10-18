@@ -193,6 +193,7 @@ struct CatSurface: NSViewRepresentable {
 final class CatNSView: NSView {
     weak var model: CatModel?
     private var renderTask: Task<Void, Never>?
+    private var occlusionObserver: NSObjectProtocol?
     private var startedAt = CACurrentMediaTime()
     private var badgeCache: [String: NSImage] = [:]
     private var generatedCache: [String: NSImage?] = [:]
@@ -239,23 +240,33 @@ final class CatNSView: NSView {
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if let occlusionObserver {
+            NotificationCenter.default.removeObserver(occlusionObserver)
+            self.occlusionObserver = nil
+        }
         if window == nil {
             stopRenderLoop()
         } else {
+            occlusionObserver = NotificationCenter.default.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: window,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor in
+                    guard let self else { return }
+                    if self.window?.occlusionState.contains(.visible) == true {
+                        self.startRenderLoop()
+                    } else {
+                        self.stopRenderLoop()
+                    }
+                }
+            }
             startRenderLoop()
-        }
-    }
-
-    override func viewDidChangeOcclusionState() {
-        super.viewDidChangeOcclusionState()
-        if let window, window.occlusionState.contains(.visible) {
-            startRenderLoop()
-        } else {
-            stopRenderLoop()
         }
     }
 
     deinit {
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
         renderTask?.cancel()
     }
 
