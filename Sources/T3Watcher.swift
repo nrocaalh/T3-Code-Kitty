@@ -227,10 +227,12 @@ final class T3Watcher {
         let marker = Array("threadLastVisitedAtById".utf8)
         var dict: [String: Any]?
 
+        // Minimal parsing: only `threadLastVisitedAtById` is ever extracted;
+        // the store may contain unrelated Electron data we must not retain.
         for url in logs {
-            guard let data = try? Data(contentsOf: url, options: [.mappedIfSafe]) else { continue }
+            guard let bytes = Self.readBounded(url, limitBytes: Self.maxLocalStorageBytes) else { continue }
             var fileDict: [String: Any]?
-            for record in Self.logicalRecords([UInt8](data)) {
+            for record in Self.logicalRecords(bytes) {
                 guard Self.find(record, marker) != nil,
                       let slice = Self.jsonObjectBytes(record),
                       let object = try? JSONSerialization.jsonObject(with: Data(slice)) as? [String: Any],
@@ -245,8 +247,7 @@ final class T3Watcher {
         }
 
         if dict == nil, let table = entries.first(where: { $0.pathExtension == "ldb" }) {
-            if let data = try? Data(contentsOf: table, options: [.mappedIfSafe]) {
-                let bytes = [UInt8](data)
+            if let bytes = Self.readBounded(table, limitBytes: Self.maxLocalStorageBytes) {
                 let rootMarker = Array(#"{"projectExpandedById""#.utf8)
                 if let start = Self.find(bytes, rootMarker),
                    let slice = Self.jsonObjectBytes(Array(bytes[start...])),
@@ -286,6 +287,8 @@ final class T3Watcher {
     /// Parse the newest snapshot object contained in a LevelDB `.log` file.
     /// When `from` is non-zero it must point at a 32 KiB block boundary.
     static func parseLog(at url: URL, from offset: Int = 0) -> T3Snapshot? {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size > 0, size <= maxLogBytes else { return nil }
         let bytes: [UInt8]
         do {
             let handle = try FileHandle(forReadingFrom: url)
@@ -422,11 +425,48 @@ final class T3Watcher {
     }
 
     private static func clean(_ value: String) -> String {
-        value
+        let spaced = value
             .replacingOccurrences(of: "\n", with: " ")
             .replacingOccurrences(of: "\r", with: " ")
-            .trimmingCharacters(in: .whitespacesAndNewlines)
+        var result = ""
+        for scalar in spaced.unicodeScalars where !isInvisible(scalar) {
+            result.unicodeScalars.append(scalar)
+        }
+        return result.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+
+    /// Drops control and format characters that could spoof UI text
+    /// (bidi overrides, zero-width spaces, etc.), keeping tab and ZWJ.
+    private static func isInvisible(_ scalar: Unicode.Scalar) -> Bool {
+        switch scalar.value {
+        case 0x0000...0x0008, 0x000B, 0x000C, 0x000E...0x001F,
+             0x007F...0x009F,
+             0x00AD, 0x061C, 0x180E,
+             0x200B, 0x200C, 0x200E, 0x200F,
+             0x202A...0x202E,
+             0x2060...0x2064, 0x2066...0x2069,
+             0xFEFF, 0xFFF9...0xFFFB,
+             0xE0001, 0xE0020...0xE007F:
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Copy-only bounded read. Never mmaps: LevelDB may truncate or delete
+    /// the file concurrently, which would crash the process on mapped reads.
+    private static func readBounded(_ url: URL, limitBytes: Int) -> [UInt8]? {
+        let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+        guard size > 0, size <= limitBytes,
+              let handle = try? FileHandle(forReadingFrom: url)
+        else { return nil }
+        defer { try? handle.close() }
+        guard let data = try? handle.readToEnd(), data.count <= limitBytes else { return nil }
+        return [UInt8](data)
+    }
+
+    private static let maxLogBytes = 64 * 1024 * 1024
+    private static let maxLocalStorageBytes = 16 * 1024 * 1024
 
     private static func isSnoozed(_ value: String?) -> Bool {
         guard let date = parseDate(value) else { return false }
@@ -510,8 +550,7 @@ final class T3Watcher {
                   cached.size == ((try? table.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? -1),
                   cached.snapshot != nil
             else {
-                guard let data = try? Data(contentsOf: table, options: [.mappedIfSafe]) else { continue }
-                let bytes = [UInt8](data)
+                guard let bytes = Self.readBounded(table, limitBytes: Self.maxLogBytes) else { continue }
                 guard let start = Self.find(bytes, Self.marker),
                       let snapshot = Self.decodeSnapshot(Array(bytes[start...]))
                 else { continue }

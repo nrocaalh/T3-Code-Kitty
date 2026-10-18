@@ -28,7 +28,7 @@ cp Assets/AppIcon.icns "$BUNDLE/Contents/Resources/AppIcon.icns"
 for asset in cat_idle cat_working cat_alert cat_sleep; do
   cp "Assets/${asset}.png" "$BUNDLE/Contents/Resources/${asset}.png"
 done
-codesign --force --sign - "$BUNDLE" >/dev/null 2>&1 || true
+codesign --force --sign - "$BUNDLE"
 
 mkdir -p "$HOME/Applications"
 rm -rf "$HOME/Applications/${APP_NAME}.app"

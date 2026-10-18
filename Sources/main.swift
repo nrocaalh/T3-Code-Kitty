@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import Combine
+import ServiceManagement
 
 // MARK: - Model
 
@@ -190,6 +191,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         watcher.start()
 
         startHitTestTimer()
+        removeLegacyLoginItem()
         Log.write("T3 Code Kitty started")
         model.resetPositionIfNeeded()
     }
@@ -496,32 +498,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     private var loginItemInstalled: Bool {
-        FileManager.default.fileExists(atPath: agentURL.path)
+        SMAppService.mainApp.status == .enabled
+    }
+
+    private func removeLegacyLoginItem() {
+        guard FileManager.default.fileExists(atPath: agentURL.path) else { return }
+        try? FileManager.default.removeItem(at: agentURL)
+        Log.write("Removed legacy LaunchAgent login item")
     }
 
     @objc private func toggleLoginItem() {
-        if loginItemInstalled {
-            try? FileManager.default.removeItem(at: agentURL)
-            return
-        }
-        guard let executable = Bundle.main.executablePath else { return }
-        let plist: [String: Any] = [
-            "Label": "com.t3codekitty.app",
-            "ProgramArguments": [executable],
-            "RunAtLoad": true,
-            "KeepAlive": false,
-            "ProcessType": "Interactive"
-        ]
         do {
-            try FileManager.default.createDirectory(
-                at: agentURL.deletingLastPathComponent(),
-                withIntermediateDirectories: true
-            )
-            let data = try PropertyListSerialization.data(fromPropertyList: plist, format: .xml, options: 0)
-            try data.write(to: agentURL)
-            Log.write("Login item installed")
+            if loginItemInstalled {
+                try SMAppService.mainApp.unregister()
+                Log.write("Login item removed")
+            } else {
+                removeLegacyLoginItem()
+                try SMAppService.mainApp.register()
+                Log.write("Login item installed")
+            }
         } catch {
-            Log.write("Failed to install login item: \(error.localizedDescription)")
+            Log.write("Failed to toggle login item: \(error.localizedDescription)")
         }
     }
 }
