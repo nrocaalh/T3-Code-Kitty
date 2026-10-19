@@ -98,14 +98,12 @@ final class CatModel: ObservableObject {
     }
 
     func catTapped() {
-        let mood = mood(at: Date())
-        if mood == .alert || mood == .finishing { dismissFinalized() }
+        dismissFinalized()
         openT3?()
     }
 
     func bubbleTapped() {
-        let mood = mood(at: Date())
-        if mood == .alert || mood == .finishing { dismissFinalized() }
+        dismissFinalized()
         openT3?()
     }
 
