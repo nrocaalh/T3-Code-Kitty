@@ -27,13 +27,62 @@ public actor T3Watcher {
     private var visitsStat: (path: String, size: Int, mtime: Date)?
     private let trackingStartedAt: Date
 
-    private let dbDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/t3code/IndexedDB/t3code_app_0.indexeddb.leveldb")
-    private let localStorageDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/t3code/Local Storage/leveldb")
     private let eventsQueue = DispatchQueue(label: "com.t3codekitty.app.events", qos: .utility)
+    private var dbDirectory: URL
+    private var localStorageDirectory: URL
+
+    /// T3 Code has moved its Electron profile between versions (`t3code`,
+    /// `t3code-v2`, ...). Pick the `t3code*` folder that contains an
+    /// IndexedDB environment and was written to most recently.
+    static func resolveProfileRoot() -> URL {
+        let appSupport = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support")
+        let fm = FileManager.default
+        let candidates = ((try? fm.contentsOfDirectory(at: appSupport, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [])
+            .filter { $0.lastPathComponent.hasPrefix("t3code") }
+            .filter { name in
+                guard let envs = try? fm.contentsOfDirectory(
+                    at: name.appendingPathComponent("IndexedDB"),
+                    includingPropertiesForKeys: nil
+                ) else { return false }
+                return envs.contains { $0.lastPathComponent.hasPrefix("t3code_app_") && $0.lastPathComponent.hasSuffix(".indexeddb.leveldb") }
+            }
+        if let best = candidates.max(by: { newestLogDate($0) < newestLogDate($1) }) {
+            return best
+        }
+        return appSupport.appendingPathComponent("t3code")
+    }
+
+    private static func newestLogDate(_ profileRoot: URL) -> Date {
+        let dbRoot = profileRoot.appendingPathComponent("IndexedDB")
+        guard let envs = try? FileManager.default.contentsOfDirectory(at: dbRoot, includingPropertiesForKeys: nil) else { return .distantPast }
+        var newest = Date.distantPast
+        for env in envs where env.lastPathComponent.hasSuffix(".indexeddb.leveldb") {
+            guard let files = try? FileManager.default.contentsOfDirectory(
+                at: env,
+                includingPropertiesForKeys: [.contentModificationDateKey]
+            ) else { continue }
+            for file in files where file.pathExtension == "log" {
+                let mtime = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
+                if mtime > newest { newest = mtime }
+            }
+        }
+        return newest
+    }
+
+    private static func firstEnvironmentDirectory(in indexedRoot: URL) -> URL? {
+        guard let envs = try? FileManager.default.contentsOfDirectory(at: indexedRoot, includingPropertiesForKeys: nil) else { return nil }
+        return envs
+            .filter { $0.lastPathComponent.hasPrefix("t3code_app_") && $0.lastPathComponent.hasSuffix(".indexeddb.leveldb") }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .first
+    }
 
     public init() {
+        let root = T3Watcher.resolveProfileRoot()
+        dbDirectory = T3Watcher.firstEnvironmentDirectory(in: root.appendingPathComponent("IndexedDB"))
+            ?? root.appendingPathComponent("IndexedDB/t3code_app_0.indexeddb.leveldb")
+        localStorageDirectory = root.appendingPathComponent("Local Storage/leveldb")
         let defaults = UserDefaults.standard
         if let stored = defaults.object(forKey: KittyDefaults.reviewedTrackingStartedAt) as? Date {
             trackingStartedAt = stored
@@ -69,6 +118,15 @@ public actor T3Watcher {
         }
 
         #if os(macOS)
+        startMonitor()
+        #endif
+
+        poll()
+    }
+
+    #if os(macOS)
+    private func startMonitor() {
+        monitor = nil
         var dirs: [String] = []
         for url in [dbDirectory, localStorageDirectory] {
             if let attrs = try? FileManager.default.attributesOfItem(atPath: url.path),
@@ -82,9 +140,26 @@ public actor T3Watcher {
                 Task { await self.poll() }
             })
         }
-        #endif
+    }
+    #endif
 
-        poll()
+    /// If T3 Code moved its profile (e.g. `t3code` -> `t3code-v2`) while we
+    /// were running, re-resolve the paths and restart the file monitor.
+    private func relocateIfNeeded() {
+        guard !FileManager.default.fileExists(atPath: dbDirectory.path) else { return }
+        let root = T3Watcher.resolveProfileRoot()
+        guard let newDb = T3Watcher.firstEnvironmentDirectory(in: root.appendingPathComponent("IndexedDB")),
+              newDb != dbDirectory
+        else { return }
+        dbDirectory = newDb
+        localStorageDirectory = root.appendingPathComponent("Local Storage/leveldb")
+        cache = [:]
+        visitsStat = nil
+        lastKnownSnapshot = nil
+        #if os(macOS)
+        startMonitor()
+        #endif
+        KittyLog.write("relocated to \(root.lastPathComponent)")
     }
 
     public func refreshNow() {
@@ -96,6 +171,7 @@ public actor T3Watcher {
         pollInFlight = true
         defer { pollInFlight = false }
 
+        relocateIfNeeded()
         let snapshot = readLatest()
         if let snapshot {
             let ready = snapshot.threads.filter { $0.needsReview }.count
