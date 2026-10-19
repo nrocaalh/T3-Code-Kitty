@@ -143,7 +143,7 @@ final class CatModel: ObservableObject {
     }
 
     private func shorten(_ value: String, limit: Int) -> String {
-        value.count <= limit ? value : String(value.prefix(limit - 1)) + "…"
+        value.count <= limit ? value : String(value.prefix(max(1, limit - 1))) + "…"
     }
 }
 
@@ -494,21 +494,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func openT3() {
         if let url = NSWorkspace.shared.urlForApplication(withBundleIdentifier: t3BundleID) {
-            let configuration = NSWorkspace.OpenConfiguration()
-            configuration.activates = true
-            NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
-                if let error { self?.kittyOpenFailure(error) }
-            }
+            launchT3(at: url)
             return
         }
-        // Fall back to the registered URL scheme before any hardcoded path.
+        // Fall back to the registered URL scheme before any installed bundle.
         if let scheme = URL(string: "t3code://"), NSWorkspace.shared.open(scheme) { return }
+        // Last resort: any installed "T3 Code*.app", most recently used first.
+        let fm = FileManager.default
+        let searchDirs = [
+            URL(fileURLWithPath: "/Applications"),
+            fm.homeDirectoryForCurrentUser.appendingPathComponent("Applications"),
+        ]
+        let candidates = searchDirs
+            .flatMap { (try? fm.contentsOfDirectory(at: $0, includingPropertiesForKeys: [.contentModificationDateKey])) ?? [] }
+            .filter { $0.lastPathComponent.hasPrefix("T3 Code") && $0.pathExtension == "app" }
+            .sorted { modificationDate($0) > modificationDate($1) }
+        if let url = candidates.first {
+            launchT3(at: url)
+            return
+        }
+        KittyLog.write("T3 Code not found: no bundle id, scheme or app bundle matched")
+    }
+
+    private func launchT3(at url: URL) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        let fallback = URL(fileURLWithPath: "/Applications/T3 Code (Alpha).app")
-        NSWorkspace.shared.openApplication(at: fallback, configuration: configuration) { [weak self] _, error in
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
             if let error { self?.kittyOpenFailure(error) }
         }
+    }
+
+    private func modificationDate(_ url: URL) -> Date {
+        (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
     }
 
     private func kittyOpenFailure(_ error: Error) {

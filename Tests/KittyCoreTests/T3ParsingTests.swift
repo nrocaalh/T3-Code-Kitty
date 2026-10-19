@@ -96,6 +96,23 @@ final class T3ParsingTests: XCTestCase {
         XCTAssertFalse(T3Parsing.isSnoozed(nil))
     }
 
+    func testParseVisitDate() {
+        let iso = T3Parsing.parseVisitDate("2026-01-01T00:00:00Z")
+        XCTAssertEqual(iso, T3Parsing.parseDate("2026-01-01T00:00:00Z"))
+
+        let seconds = T3Parsing.parseVisitDate(NSNumber(value: 1_767_225_600))
+        XCTAssertEqual(seconds, Date(timeIntervalSince1970: 1_767_225_600))
+
+        let millis = T3Parsing.parseVisitDate(NSNumber(value: 1_767_225_600_000))
+        XCTAssertEqual(millis, Date(timeIntervalSince1970: 1_767_225_600))
+
+        XCTAssertNil(T3Parsing.parseVisitDate(nil))
+        XCTAssertNil(T3Parsing.parseVisitDate(NSNull()))
+        XCTAssertNil(T3Parsing.parseVisitDate("not-a-date"))
+        XCTAssertNil(T3Parsing.parseVisitDate(NSNumber(value: -5)))
+        XCTAssertNil(T3Parsing.parseVisitDate(NSNumber(value: true)))
+    }
+
     // MARK: - Thread semantics
 
     private func snapshot(fromJSON json: String) throws -> T3Snapshot {

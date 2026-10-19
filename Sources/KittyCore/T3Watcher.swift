@@ -321,13 +321,13 @@ public actor T3Watcher {
             }
         }
 
-        guard let raw = dict?["threadLastVisitedAtById"] as? [String: String] else {
+        guard let raw = dict?["threadLastVisitedAtById"] as? [String: Any] else {
             rememberVisitsStat(logs.first)
             return cachedVisits
         }
         var visits: [String: Date] = [:]
         for (key, value) in raw {
-            guard let date = T3Parsing.parseDate(value) else { continue }
+            guard let date = T3Parsing.parseVisitDate(value) else { continue }
             let threadID = key.components(separatedBy: ":").last ?? key
             visits[threadID] = date
         }

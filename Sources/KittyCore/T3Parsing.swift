@@ -303,6 +303,20 @@ enum T3Parsing {
         return ISO8601DateFormatter().date(from: value)
     }
 
+    /// `threadLastVisitedAtById` values may be ISO strings or epoch numbers
+    /// (seconds or milliseconds) depending on the T3 Code version.
+    static func parseVisitDate(_ value: Any?) -> Date? {
+        guard let value, !(value is NSNull) else { return nil }
+        if let text = value as? String { return parseDate(text) }
+        if let number = value as? NSNumber {
+            let seconds = number.doubleValue > 100_000_000_000
+                ? number.doubleValue / 1000
+                : number.doubleValue
+            return seconds > 0 ? Date(timeIntervalSince1970: seconds) : nil
+        }
+        return nil
+    }
+
     /// Copy-only bounded read. Never mmaps: LevelDB may truncate or delete
     /// the file concurrently, which would crash the process on mapped reads.
     static func readBounded(_ url: URL, limitBytes: Int) -> [UInt8]? {
