@@ -19,6 +19,16 @@ final class T3ParsingTests: XCTestCase {
         XCTAssertNil(T3Parsing.find([], [1]))
     }
 
+    func testFindEdgeCases() {
+        XCTAssertEqual(T3Parsing.find(Array("abc".utf8), Array("abc".utf8)), 0)
+        XCTAssertEqual(T3Parsing.find(Array("a".utf8), Array("a".utf8)), 0)
+        XCTAssertEqual(T3Parsing.find(Array("ababababX".utf8), Array("abX".utf8)), 6)
+        XCTAssertEqual(T3Parsing.find(Array("aXbXc".utf8), Array("Xc".utf8)), 3)
+        XCTAssertEqual(T3Parsing.find(Array("xxab".utf8), Array("ab".utf8)), 2)
+        XCTAssertNil(T3Parsing.find(Array("ab".utf8), Array("abc".utf8)))
+        XCTAssertNil(T3Parsing.find(Array("abcdef".utf8), []))
+    }
+
     func testJsonObjectBytesHandlesNestingAndEscapes() {
         let text = #"prefix {"a":{"b":"x\"y}z"},"c":1}" suffix"#
         let bytes = Array(text.utf8)

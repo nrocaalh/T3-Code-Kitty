@@ -58,25 +58,27 @@ enum T3Parsing {
     static let marker = Array(#"{"schemaVersion""#.utf8)
 
     static func find(_ haystack: [UInt8], _ needle: [UInt8]) -> Int? {
-        guard !needle.isEmpty, haystack.count >= needle.count else { return nil }
-        let limit = haystack.count - needle.count
+        let n = haystack.count
+        let m = needle.count
+        guard m > 0, n >= m else { return nil }
+        if m == 1 { return haystack.firstIndex(of: needle[0]) }
+        // Boyer-Moore-Horspool: the snapshot marker is 16 bytes, so the skip
+        // table lets us stride past most of multi-megabyte records.
+        var skip = [Int](repeating: m, count: 256)
+        for i in 0..<(m - 1) { skip[Int(needle[i])] = m - 1 - i }
         var i = 0
-        while i <= limit {
-            if haystack[i] == needle[0] {
-                var j = 1
-                while j < needle.count && haystack[i + j] == needle[j] { j += 1 }
-                if j == needle.count { return i }
-            }
-            i += 1
+        while i <= n - m {
+            var j = m - 1
+            while j >= 0 && haystack[i + j] == needle[j] { j -= 1 }
+            if j < 0 { return i }
+            i += skip[Int(haystack[i + m - 1])]
         }
         return nil
     }
 
     static func decodeSnapshot(_ payload: [UInt8]) -> T3Snapshot? {
         guard let slice = jsonObjectBytes(payload) else { return nil }
-        let text = String(decoding: slice, as: UTF8.self)
-        guard let data = text.data(using: .utf8),
-              let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+        guard let root = try? JSONSerialization.jsonObject(with: Data(slice)) as? [String: Any],
               let snapshot = root["snapshot"] as? [String: Any]
         else { return nil }
 

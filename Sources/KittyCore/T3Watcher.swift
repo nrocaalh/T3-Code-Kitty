@@ -295,13 +295,16 @@ public actor T3Watcher {
         for url in logs {
             guard let bytes = T3Parsing.readBounded(url, limitBytes: T3Parsing.maxLocalStorageBytes) else { continue }
             var fileDict: [String: Any]?
-            for record in T3Parsing.logicalRecords(bytes) {
+            // Newest-first: the last matching record in file order is the
+            // one that wins, so stop at the first match scanning reversed.
+            for record in T3Parsing.logicalRecords(bytes).reversed() {
                 guard T3Parsing.find(record, marker) != nil,
                       let slice = T3Parsing.jsonObjectBytes(record),
                       let object = try? JSONSerialization.jsonObject(with: Data(slice)) as? [String: Any],
                       object["threadLastVisitedAtById"] is [String: Any]
                 else { continue }
                 fileDict = object
+                break
             }
             if let fileDict {
                 dict = fileDict
