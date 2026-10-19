@@ -250,7 +250,11 @@ public actor T3Watcher {
         let visits = readThreadVisits()
         let threads = snapshot.threads.map { thread -> T3Thread in
             var copy = thread
-            copy.lastVisitedAt = visits[thread.id]
+            if copy.lastVisitedAt == nil {
+                copy.lastVisitedAt = visits[thread.id]
+            } else if let lsVisit = visits[thread.id], lsVisit > copy.lastVisitedAt! {
+                copy.lastVisitedAt = lsVisit
+            }
             if let completedAt = thread.latestTurnCompletedAt ?? thread.updatedAt {
                 copy.reviewedByBacklog = thread.status == "ready" && completedAt < trackingStartedAt
             }

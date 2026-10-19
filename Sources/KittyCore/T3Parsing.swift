@@ -99,21 +99,40 @@ enum T3Parsing {
                 if thread["archivedAt"] is String { continue }
                 let session = thread["session"] as? [String: Any] ?? [:]
                 let projectId = thread["projectId"] as? String ?? ""
+                let status = normalizedStatus(thread: thread, session: session)
+                let latestTurn = thread["latestTurn"] as? [String: Any]
+                let hasError: Bool
+                if let sessionError = session["lastError"] as? String {
+                    hasError = !sessionError.isEmpty
+                } else if let threadError = thread["lastError"] as? String {
+                    hasError = !threadError.isEmpty
+                } else {
+                    hasError = false
+                }
+                let pendingApproval: Bool
+                if let flag = thread["hasPendingApprovals"] as? Bool {
+                    pendingApproval = flag
+                } else {
+                    // v3 has no hasPendingApprovals; a JSON null becomes NSNull,
+                    // so test for an actual (non-null) value, not mere presence.
+                    pendingApproval = Self.isPresent(thread["pendingRuntimeRequest"])
+                }
                 threads.append(T3Thread(
                     id: id,
                     title: clean(thread["title"] as? String ?? "Session"),
                     projectTitle: projects[projectId] ?? "",
-                    status: session["status"] as? String ?? "stopped",
+                    status: status,
                     settled: thread["settledAt"] is String,
                     snoozed: isSnoozed(thread["snoozedUntil"] as? String),
-                    pendingApproval: thread["hasPendingApprovals"] as? Bool ?? false,
+                    pendingApproval: pendingApproval,
                     pendingInput: thread["hasPendingUserInput"] as? Bool ?? false,
                     proposedPlan: thread["hasActionableProposedPlan"] as? Bool ?? false,
-                    hasError: (session["lastError"] as? String)?.isEmpty == false,
+                    hasError: hasError,
                     updatedAt: parseDate(thread["updatedAt"] as? String),
-                    latestTurnId: (thread["latestTurn"] as? [String: Any])?["turnId"] as? String,
-                    latestTurnCompletedAt: parseDate((thread["latestTurn"] as? [String: Any])?["completedAt"] as? String),
-                    lastVisitedAt: nil
+                    latestTurnId: (latestTurn?["turnId"] as? String) ?? (thread["latestRunId"] as? String),
+                    latestTurnCompletedAt: parseDate(latestTurn?["completedAt"] as? String)
+                        ?? parseDate(thread["latestRunCompletedAt"] as? String),
+                    lastVisitedAt: parseDate(thread["lastVisitedAt"] as? String)
                 ))
             }
         }
@@ -124,6 +143,36 @@ enum T3Parsing {
             threads: threads,
             capturedAt: Date()
         )
+    }
+
+    /// A JSON null deserializes to NSNull, so "key present" is not "has value".
+    static func isPresent(_ value: Any?) -> Bool {
+        guard let value else { return false }
+        if value is NSNull { return false }
+        if let s = value as? String { return !s.isEmpty }
+        if let n = value as? NSNumber { return true }
+        if let a = value as? [Any] { return !a.isEmpty }
+        if let d = value as? [String: Any] { return !d.isEmpty }
+        return true
+    }
+
+    /// T3 Code Beta (schema v3) moved the status from `session.status` to the
+    /// thread level and renamed its vocabulary: `completed` == old `ready`,
+    /// `idle` == old `stopped`. Normalize so the rest of the app speaks one
+    /// language and both schemas decode identically.
+    static func normalizedStatus(thread: [String: Any], session: [String: Any]) -> String {
+        let raw = (session["status"] as? String) ?? (thread["status"] as? String) ?? "stopped"
+        let mapped: String
+        switch raw {
+        case "completed": mapped = "ready"
+        case "idle": mapped = "stopped"
+        case "queued", "starting": mapped = "running"
+        default: mapped = raw
+        }
+        if mapped == "stopped", thread["activeRunId"] is String, thread["latestRunCompletedAt"] == nil {
+            return "running"
+        }
+        return mapped
     }
 
     /// Returns the bytes of the first complete JSON object starting at the

@@ -146,6 +146,50 @@ final class T3ParsingTests: XCTestCase {
         XCTAssertNil(T3Parsing.decodeSnapshot([0xFF, 0xFE, 0x00, 0x01]))
     }
 
+    // MARK: - T3 Code Beta (schema v3) thread-level status
+
+    func testDecodeSnapshotSchemaV3() throws {
+        // v3 moves status to the thread, renames its vocabulary and nulls out
+        // optional keys (JSON null -> NSNull, which must not read as "present").
+        let json = [
+            #"{"schemaVersion":3,"environmentId":"env-9","snapshot":{"snapshotSequence":99,"projects":[],"threads":["#,
+            #"{"id":"a","title":"Done","status":"completed","lastError":null,"pendingRuntimeRequest":null,"activeRunId":null,"latestRunId":"run-1","latestRunCompletedAt":"2026-02-01T00:00:00Z","lastVisitedAt":"2026-02-01T00:00:01Z","updatedAt":"2026-02-01T00:00:00Z"},"#,
+            #"{"id":"b","title":"Idle","status":"idle","lastError":null,"pendingRuntimeRequest":null,"activeRunId":null,"settledAt":"2026-02-01T00:00:00Z","updatedAt":"2026-02-01T00:00:00Z"},"#,
+            #"{"id":"c","title":"Busy","status":"running","activeRunId":"run-9","lastError":null,"pendingRuntimeRequest":null,"updatedAt":"2026-02-01T00:00:02Z"},"#,
+            #"{"id":"d","title":"Queued","status":"queued","lastError":null,"updatedAt":"2026-02-01T00:00:03Z"}"#,
+            #"]}}"#,
+        ].joined()
+        let snapshot = try snapshot(fromJSON: json)
+
+        XCTAssertEqual(snapshot.threads.count, 4)
+        let a = try XCTUnwrap(snapshot.threads.first { $0.id == "a" })
+        XCTAssertEqual(a.status, "ready")        // completed -> ready
+        XCTAssertTrue(a.needsReview)
+        XCTAssertTrue(a.isReviewedByVisit)        // visited after completion
+        XCTAssertEqual(a.alertKey, "a#run-1")     // latestRunId as review key
+        XCTAssertEqual(a.latestTurnCompletedAt, T3Parsing.parseDate("2026-02-01T00:00:00Z"))
+
+        let b = try XCTUnwrap(snapshot.threads.first { $0.id == "b" })
+        XCTAssertEqual(b.status, "stopped")       // idle -> stopped
+        XCTAssertFalse(b.needsReview)
+
+        let c = try XCTUnwrap(snapshot.threads.first { $0.id == "c" })
+        XCTAssertTrue(c.isRunning)
+        XCTAssertFalse(c.pendingApproval)         // null must not count as present
+
+        let d = try XCTUnwrap(snapshot.threads.first { $0.id == "d" })
+        XCTAssertTrue(d.isRunning)                // queued -> running
+    }
+
+    func testSchemaV3IdleButActiveRunCountsRunning() {
+        // Lag case: status still "idle" while a run is in flight.
+        let threadDict: [String: Any] = [
+            "status": "idle",
+            "activeRunId": "run-1",
+        ]
+        XCTAssertEqual(T3Parsing.normalizedStatus(thread: threadDict, session: [:]), "running")
+    }
+
     func testParseLogPicksNewestRecord() throws {
         let older = fullRecord([UInt8](#"{"schemaVersion":1,"snapshot":{"snapshotSequence":1,"threads":[]}}"#.utf8))
         let newer = fullRecord([UInt8](#"{"schemaVersion":1,"snapshot":{"snapshotSequence":9,"threads":[]}}"#.utf8))
