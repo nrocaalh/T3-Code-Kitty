@@ -306,7 +306,7 @@ enum T3Parsing {
     /// `threadLastVisitedAtById` values may be ISO strings or epoch numbers
     /// (seconds or milliseconds) depending on the T3 Code version.
     static func parseVisitDate(_ value: Any?) -> Date? {
-        guard let value, !(value is NSNull) else { return nil }
+        guard let value, !(value is NSNull), !(value is Bool) else { return nil }
         if let text = value as? String { return parseDate(text) }
         if let number = value as? NSNumber {
             let seconds = number.doubleValue > 100_000_000_000
