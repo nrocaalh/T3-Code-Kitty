@@ -12,6 +12,10 @@ mkdir -p "$BUNDLE/Contents/MacOS" "$BUNDLE/Contents/Resources"
 
 cp ".build/release/${APP_NAME}" "$BUNDLE/Contents/MacOS/${APP_NAME}"
 cp Info.plist "$BUNDLE/Contents/Info.plist"
+if [[ -n "${APP_VERSION:-}" ]]; then
+  plutil -replace CFBundleShortVersionString -string "$APP_VERSION" "$BUNDLE/Contents/Info.plist"
+  plutil -replace CFBundleVersion -string "$APP_VERSION" "$BUNDLE/Contents/Info.plist"
+fi
 for lang in es en; do
   mkdir -p "$BUNDLE/Contents/Resources/${lang}.lproj"
   cp "Resources/${lang}.lproj/Localizable.strings" "$BUNDLE/Contents/Resources/${lang}.lproj/"

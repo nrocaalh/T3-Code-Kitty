@@ -19,6 +19,10 @@ El click en el gato limpia los avisos de "finalizado" y abre T3 Code.
 
 Lee en **solo lectura** la caché local de T3 Code (IndexedDB/LevelDB en `~/Library/Application Support/t3code`) para conocer el estado de las sesiones. No usa red, no escribe en la base de datos de T3 Code y no envía ningún dato fuera de tu máquina.
 
+## Descargar
+
+Descarga el último `.zip` desde [Releases](https://github.com/nrocaalh/T3-Code-Kitty/releases), descomprímelo y mueve `T3CodeKitty.app` a `~/Applications`. Para actualizar, descarga la nueva versión y sustituye la app (tu configuración — posición del panel, idioma, etc. — se conserva).
+
 ## Construir
 
 Requiere Xcode 16+ (herramientas Swift 6).
@@ -29,6 +33,12 @@ swift test    # tests unitarios del núcleo de parseo
 ```
 
 Instala la app en `~/Applications/T3CodeKitty.app` (firmada ad-hoc, sin sandbox). El CI (`.github/workflows/ci.yml`) ejecuta tests + build en cada push.
+
+Para publicar una versión, sube `CFBundleShortVersionString` en `Info.plist`, crea un tag y el CI hace el resto:
+
+```sh
+git tag v1.2.0 && git push origin v1.2.0   # ejecuta tests, compila y adjunta el zip a un Release de GitHub
+```
 
 ## Uso
 

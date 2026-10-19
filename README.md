@@ -19,6 +19,10 @@ Clicking the cat clears the "done" alerts and opens T3 Code.
 
 Reads the local T3 Code cache (IndexedDB/LevelDB in `~/Library/Application Support/t3code`) in **read-only** mode to know the state of your sessions. No network, no writes to T3 Code's database, and no data leaves your machine.
 
+## Download
+
+Grab the latest `.zip` from [Releases](https://github.com/nrocaalh/T3-Code-Kitty/releases), unzip it and move `T3CodeKitty.app` to `~/Applications`. To update, download the new release and replace the app (your settings — panel position, language, etc. — are kept).
+
 ## Build
 
 Requires Xcode 16+ (Swift 6 toolchain) and command line tools.
@@ -29,6 +33,12 @@ swift test    # unit tests for the parsing core
 ```
 
 Installs the app to `~/Applications/T3CodeKitty.app` (ad-hoc signed, no sandbox). CI (`.github/workflows/ci.yml`) runs tests + build on every push.
+
+To cut a release, bump `CFBundleShortVersionString` in `Info.plist`, push a tag and CI does the rest:
+
+```sh
+git tag v1.2.0 && git push origin v1.2.0   # runs tests, builds, attaches zip to a GitHub Release
+```
 
 ## Usage
 
