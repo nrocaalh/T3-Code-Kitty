@@ -519,11 +519,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func launchT3(at url: URL) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
-            // Completion runs on a background LaunchServices queue; never hop
-            // to MainActor here. KittyLog (os.Logger) is thread-safe.
-            if let error { KittyLog.write("Failed to open T3 Code: \(error.localizedDescription)") }
-        }
+        NSWorkspace.shared.openApplication(
+            at: url,
+            configuration: configuration,
+            completionHandler: logT3OpenFailure
+        )
     }
 
     private func modificationDate(_ url: URL) -> Date {
@@ -596,6 +596,14 @@ extension CatModel {
 }
 
 // MARK: - Entry point
+
+// LaunchServices invokes the completion on a background queue. A closure literal
+// written inside launchT3 would inherit its @MainActor isolation and the executor
+// assertion would trap on entry (dispatch_assert_queue → SIGTRAP); a file-scope
+// function is nonisolated.
+private func logT3OpenFailure(_ application: NSRunningApplication?, _ error: (any Error)?) {
+    if let error { KittyLog.write("Failed to open T3 Code: \(error.localizedDescription)") }
+}
 
 let application = NSApplication.shared
 let delegate = AppDelegate()
