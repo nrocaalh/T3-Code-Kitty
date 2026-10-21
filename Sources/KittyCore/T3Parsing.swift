@@ -152,7 +152,7 @@ enum T3Parsing {
         guard let value else { return false }
         if value is NSNull { return false }
         if let s = value as? String { return !s.isEmpty }
-        if let n = value as? NSNumber { return true }
+        if value is NSNumber { return true }
         if let a = value as? [Any] { return !a.isEmpty }
         if let d = value as? [String: Any] { return !d.isEmpty }
         return true

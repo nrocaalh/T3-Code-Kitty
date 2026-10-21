@@ -519,17 +519,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private func launchT3(at url: URL) {
         let configuration = NSWorkspace.OpenConfiguration()
         configuration.activates = true
-        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { [weak self] _, error in
-            if let error { self?.kittyOpenFailure(error) }
+        NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, error in
+            // Completion runs on a background LaunchServices queue; never hop
+            // to MainActor here. KittyLog (os.Logger) is thread-safe.
+            if let error { KittyLog.write("Failed to open T3 Code: \(error.localizedDescription)") }
         }
     }
 
     private func modificationDate(_ url: URL) -> Date {
         (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? .distantPast
-    }
-
-    private func kittyOpenFailure(_ error: Error) {
-        KittyLog.write("Failed to open T3 Code: \(error.localizedDescription)")
     }
 
     // MARK: Login item
