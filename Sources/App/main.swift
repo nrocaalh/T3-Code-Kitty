@@ -12,6 +12,8 @@ final class CatModel: ObservableObject {
     @Published var runningCount = 0
     @Published var t3Running = true
     @Published var hasSnapshot = false
+    /// True when T3 Code is writing session data the parser cannot decode.
+    @Published var isBlind = false
     @Published var celebrateUntil = Date.distantPast
     @Published var finishingUntil = Date.distantPast
     @Published var bubbleMutedUntil = Date.distantPast
@@ -67,6 +69,7 @@ final class CatModel: ObservableObject {
     var statusLine: String {
         let l = L10n.shared
         guard t3Running else { return l.t("status.closed") }
+        guard !isBlind else { return l.t("status.blind") }
         guard hasSnapshot else { return l.t("status.waiting") }
         let pending = unreviewedReview
         if pending.isEmpty {
@@ -82,6 +85,7 @@ final class CatModel: ObservableObject {
     func mood(at now: Date) -> CatMood {
         guard t3Running else { return .sleeping }
         if now < finishingUntil { return .finishing }
+        if isBlind { return .alert }
         if runningCount > 0 { return .working }
         if !unreviewedReview.isEmpty { return .alert }
         return .idle
@@ -188,8 +192,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let startedWatcher = watcher
         if let startedWatcher {
             Task {
-                await startedWatcher.start(onUpdate: { [weak self] snapshot in
-                    Task { @MainActor [weak self] in self?.apply(snapshot) }
+                await startedWatcher.start(onUpdate: { [weak self] snapshot, blind in
+                    Task { @MainActor [weak self] in self?.apply(snapshot, blind: blind) }
                 })
             }
         }
@@ -281,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: State
 
-    private func apply(_ snapshot: T3Snapshot?) {
+    private func apply(_ snapshot: T3Snapshot?, blind: Bool) {
         let running = t3IsRunning()
         let threads = snapshot?.threads ?? []
         let review = threads
@@ -291,12 +295,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let visitSignature = review
             .map { "\($0.id):\($0.lastVisitedAt?.timeIntervalSince1970 ?? 0)" }
             .joined(separator: ",")
-        let fingerprint = "\(running)|\(snapshot != nil)|\(review.map(\.alertKey).joined(separator: ","))|\(runningThreads.count)|\(visitSignature)"
+        let fingerprint = "\(running)|\(snapshot != nil)|\(blind)|\(review.map(\.alertKey).joined(separator: ","))|\(runningThreads.count)|\(visitSignature)"
         if fingerprint == lastFingerprint {
             return
         }
         lastFingerprint = fingerprint
         model.t3Running = running
+        model.isBlind = blind
 
         guard running else {
             model.review = []

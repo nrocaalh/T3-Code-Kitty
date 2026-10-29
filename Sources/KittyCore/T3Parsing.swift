@@ -58,15 +58,19 @@ enum T3Parsing {
     static let marker = Array(#"{"schemaVersion""#.utf8)
 
     static func find(_ haystack: [UInt8], _ needle: [UInt8]) -> Int? {
+        find(haystack, needle, from: 0)
+    }
+
+    static func find(_ haystack: [UInt8], _ needle: [UInt8], from start: Int) -> Int? {
         let n = haystack.count
         let m = needle.count
-        guard m > 0, n >= m else { return nil }
-        if m == 1 { return haystack.firstIndex(of: needle[0]) }
+        guard m > 0, start >= 0, n - start >= m else { return nil }
+        if m == 1 { return haystack[start...].firstIndex(of: needle[0]) }
         // Boyer-Moore-Horspool: the snapshot marker is 16 bytes, so the skip
         // table lets us stride past most of multi-megabyte records.
         var skip = [Int](repeating: m, count: 256)
         for i in 0..<(m - 1) { skip[Int(needle[i])] = m - 1 - i }
-        var i = 0
+        var i = start
         while i <= n - m {
             var j = m - 1
             while j >= 0 && haystack[i + j] == needle[j] { j -= 1 }
@@ -76,12 +80,226 @@ enum T3Parsing {
         return nil
     }
 
+    // MARK: - IndexedDB value decoding
+
+    /// Blink wraps large IndexedDB values as `FF 11 02` + a Snappy stream
+    /// (see idb_value_wrapping.cc: kRequiresProcessingSSVPseudoVersion +
+    /// kCompressedWithSnappy). Without unwrapping, the cached shell snapshot
+    /// is unreadable.
+    static let idbSnappyWrapper: [UInt8] = [0xFF, 0x11, 0x02]
+    static let maxSnappyOutput = 64 * 1024 * 1024
+
+    /// Decodes one IndexedDB value into a snapshot, whatever encoding T3
+    /// Code's Chromium used for it: raw JSON, a Snappy-wrapped string, or a
+    /// two-byte (UTF-16) V8 string.
+    static func decodeSnapshotValue(_ bytes: [UInt8]) -> T3Snapshot? {
+        if let snapshot = decodeSnapshot(bytes) { return snapshot }
+        var searchFrom = 0
+        var attempts = 0
+        while attempts < 16,
+              let wrap = find(bytes, idbSnappyWrapper, from: searchFrom) {
+            attempts += 1
+            searchFrom = wrap + idbSnappyWrapper.count
+            guard let inflated = snappyDecompress(Array(bytes[searchFrom...])) else { continue }
+            if let snapshot = decodeSnapshot(inflated) { return snapshot }
+            if let snapshot = decodeSnapshotFromUTF16(inflated) { return snapshot }
+        }
+        return decodeSnapshotFromUTF16(bytes)
+    }
+
+    static func readVarint(_ bytes: [UInt8], _ offset: inout Int) -> Int? {
+        var result = 0
+        var shift = 0
+        while offset < bytes.count {
+            let byte = bytes[offset]
+            offset += 1
+            result |= (Int(byte) & 0x7F) << shift
+            if byte & 0x80 == 0 { return result }
+            shift += 7
+            if shift > 35 { return nil }
+        }
+        return nil
+    }
+
+    /// Raw Snappy block format: varint uncompressed length, then literal and
+    /// copy tags. This is the whole decompressor IndexedDB values need.
+    static func snappyDecompress(_ input: [UInt8]) -> [UInt8]? {
+        var offset = 0
+        guard let length = readVarint(input, &offset), length > 0, length <= maxSnappyOutput
+        else { return nil }
+        var out = [UInt8]()
+        out.reserveCapacity(min(length, 4 * 1024 * 1024))
+        while offset < input.count, out.count < length {
+            let tag = input[offset]
+            offset += 1
+            let kind = tag & 0x03
+            if kind == 0 {
+                var count = Int(tag >> 2)
+                if count >= 60 {
+                    let extra = count - 59
+                    guard offset + extra <= input.count else { return nil }
+                    count = 0
+                    for index in 0..<extra { count |= Int(input[offset + index]) << (8 * index) }
+                    offset += extra
+                    count += 1
+                } else {
+                    count += 1
+                }
+                guard offset + count <= input.count, out.count + count <= length else { return nil }
+                out.append(contentsOf: input[offset..<(offset + count)])
+                offset += count
+            } else {
+                let count: Int
+                var distance: Int
+                switch kind {
+                case 1:
+                    count = 4 + (Int(tag >> 2) & 0x07)
+                    guard offset < input.count else { return nil }
+                    distance = (Int(tag >> 5) << 8) | Int(input[offset])
+                    offset += 1
+                case 2:
+                    count = Int(tag >> 2) + 1
+                    guard offset + 2 <= input.count else { return nil }
+                    distance = Int(input[offset]) | (Int(input[offset + 1]) << 8)
+                    offset += 2
+                default:
+                    count = Int(tag >> 2) + 1
+                    guard offset + 4 <= input.count else { return nil }
+                    distance = Int(input[offset])
+                        | (Int(input[offset + 1]) << 8)
+                        | (Int(input[offset + 2]) << 16)
+                        | (Int(input[offset + 3]) << 24)
+                    offset += 4
+                }
+                guard distance > 0, distance <= out.count, out.count + count <= length else {
+                    return nil
+                }
+                // Copies may overlap their own output, so they go byte by byte.
+                for _ in 0..<count {
+                    out.append(out[out.count - distance])
+                }
+            }
+        }
+        return out.count == length ? out : nil
+    }
+
+    /// JSON root for one-byte V8 strings: Chromium stores JS strings with
+    /// only Latin-1 characters as one byte per char, so accented text is not
+    /// valid UTF-8 on disk. Try UTF-8 first, then transcode Latin-1.
+    static func jsonRoot(from bytes: [UInt8]) -> [String: Any]? {
+        if let object = try? JSONSerialization.jsonObject(with: Data(bytes)) {
+            return object as? [String: Any]
+        }
+        var utf8 = [UInt8]()
+        utf8.reserveCapacity(bytes.count + 16)
+        for byte in bytes {
+            if byte < 0x80 {
+                utf8.append(byte)
+            } else {
+                utf8.append(0xC0 | (byte >> 6))
+                utf8.append(0x80 | (byte & 0x3F))
+            }
+        }
+        if let object = try? JSONSerialization.jsonObject(with: Data(utf8)) {
+            return object as? [String: Any]
+        }
+        return nil
+    }
+
     static func decodeSnapshot(_ payload: [UInt8]) -> T3Snapshot? {
-        guard let slice = jsonObjectBytes(payload) else { return nil }
-        guard let root = try? JSONSerialization.jsonObject(with: Data(slice)) as? [String: Any],
+        guard let slice = jsonObjectBytes(payload),
+              let root = jsonRoot(from: slice),
               let snapshot = root["snapshot"] as? [String: Any]
         else { return nil }
+        return buildSnapshot(root: root, snapshot: snapshot)
+    }
 
+    /// Two-byte V8 strings (any character above U+00FF, e.g. emoji) store the
+    /// JSON as UTF-16LE. Matches `{"schemaVersion":` interleaved with zeros,
+    /// then brace-matches with a two-byte stride.
+    static let utf16Marker: [UInt8] = {
+        var bytes: [UInt8] = []
+        for unit in "{\"schemaVersion\":".utf16 {
+            bytes.append(UInt8(unit & 0xFF))
+            bytes.append(UInt8(unit >> 8))
+        }
+        return bytes
+    }()
+
+    /// Byte signature of a record that holds shell/thread snapshot data (as
+    /// opposed to config or vcs-refs records, which also carry
+    /// `{"schemaVersion"`). Used to tell "T3 Code is writing snapshot data we
+    /// cannot decode" apart from "the log only has unrelated records".
+    static let shellSignature = Array(#""snapshot":{"snapshotSequence""#.utf8)
+    static let shellSignatureUTF16: [UInt8] = {
+        var bytes: [UInt8] = []
+        for unit in "\"snapshot\":{\"snapshotSequence\"".utf16 {
+            bytes.append(UInt8(unit & 0xFF))
+            bytes.append(UInt8(unit >> 8))
+        }
+        return bytes
+    }()
+
+    static func containsShellSignature(_ bytes: [UInt8]) -> Bool {
+        find(bytes, shellSignature) != nil || find(bytes, shellSignatureUTF16) != nil
+    }
+
+    static func decodeSnapshotFromUTF16(_ bytes: [UInt8]) -> T3Snapshot? {
+        guard let start = find(bytes, utf16Marker),
+              let units = jsonObjectUTF16Units(bytes, start: start)
+        else { return nil }
+        let text = String(decoding: units, as: UTF16.self)
+        guard let root = (try? JSONSerialization.jsonObject(with: Data(text.utf8))) as? [String: Any],
+              let snapshot = root["snapshot"] as? [String: Any]
+        else { return nil }
+        return buildSnapshot(root: root, snapshot: snapshot)
+    }
+
+    /// Returns the JSON object's UTF-16 code units, starting at `start` (the
+    /// `{` low byte of the UTF-16LE marker). String content may hold any code
+    /// unit (surrogate pairs); the structural region must stay ASCII.
+    static func jsonObjectUTF16Units(_ payload: [UInt8], start: Int) -> [UInt16]? {
+        var depth = 0
+        var inString = false
+        var escaped = false
+        var i = start
+        while i + 1 < payload.count {
+            let low = payload[i]
+            let high = payload[i + 1]
+            if inString {
+                if escaped {
+                    escaped = false
+                } else if high == 0, low == 0x5C {
+                    escaped = true
+                } else if high == 0, low == 0x22 {
+                    inString = false
+                }
+            } else {
+                guard high == 0 else { return nil }
+                if low == 0x22 {
+                    inString = true
+                } else if low == 0x7B {
+                    depth += 1
+                } else if low == 0x7D {
+                    depth -= 1
+                    if depth == 0 {
+                        var units = [UInt16]()
+                        units.reserveCapacity((i + 2 - start) / 2)
+                        var j = start
+                        while j <= i {
+                            units.append(UInt16(payload[j]) | (UInt16(payload[j + 1]) << 8))
+                            j += 2
+                        }
+                        return units
+                    }
+                }
+            }
+            i += 2
+        }
+        return nil
+    }
+
+    static func buildSnapshot(root: [String: Any], snapshot: [String: Any]) -> T3Snapshot? {
         let environmentId = root["environmentId"] as? String ?? ""
         let sequence = snapshot["snapshotSequence"] as? Int ?? 0
 
@@ -358,8 +576,7 @@ enum T3Parsing {
         // Walk backwards: the newest snapshot is near the end, and a few
         // trailing records may merely contain the marker in a key or title.
         for record in records.reversed() {
-            guard let start = find(record, marker) else { continue }
-            if let snapshot = decodeSnapshot(Array(record[start...])) {
+            if let snapshot = decodeSnapshotValue(record) {
                 return snapshot
             }
         }

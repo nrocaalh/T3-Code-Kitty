@@ -2,6 +2,7 @@
 
 "status.closed" = "T3 Code está cerrado";
 "status.waiting" = "Esperando datos de T3 Code…";
+"status.blind" = "No puedo leer las sesiones (¿T3 Code actualizó su formato?)";
 "status.allgood" = "Todo al día";
 "status.working.one" = "1 trabajando";
 "status.working.other" = "%d trabajando";

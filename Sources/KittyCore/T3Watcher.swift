@@ -13,7 +13,7 @@ public actor T3Watcher {
         let snapshot: T3Snapshot?
     }
 
-    private var onUpdate: (@Sendable (T3Snapshot?) -> Void)?
+    private var onUpdate: (@Sendable (T3Snapshot?, Bool) -> Void)?
     private var safetyLoop: Task<Void, Never>?
     #if os(macOS)
     private var monitor: DirMonitor?
@@ -26,6 +26,15 @@ public actor T3Watcher {
     private var cachedVisits: [String: Date] = [:]
     private var visitsStat: (path: String, size: Int, mtime: Date)?
     private let trackingStartedAt: Date
+
+    /// True while T3 Code keeps writing snapshot data that we cannot decode
+    /// (e.g. a T3 Code update changed the cache format). The UI surfaces it so
+    /// a broken parser never looks like "no sessions".
+    public private(set) var isBlind = false
+    private var lastGoodParseAt = Date.distantPast
+    private var sawFreshParse = false
+    private static let blindAfterSeconds: TimeInterval = 300
+    private static let freshWindowSeconds: TimeInterval = 300
 
     private let eventsQueue = DispatchQueue(label: "com.t3codekitty.app.events", qos: .utility)
     private var dbDirectory: URL
@@ -98,7 +107,7 @@ public actor T3Watcher {
 
     /// Idempotent: safe to call from `applicationDidFinishLaunching` and
     /// again from `applicationDidBecomeActive`.
-    public func start(onUpdate: @escaping @Sendable (T3Snapshot?) -> Void) {
+    public func start(onUpdate: @escaping @Sendable (T3Snapshot?, Bool) -> Void) {
         self.onUpdate = onUpdate
         guard !didStart else {
             poll()
@@ -156,6 +165,10 @@ public actor T3Watcher {
         cache = [:]
         visitsStat = nil
         lastKnownSnapshot = nil
+        // Grace period: the new profile gets five minutes before the blind
+        // detector may fire against it.
+        lastGoodParseAt = Date()
+        isBlind = false
         #if os(macOS)
         startMonitor()
         #endif
@@ -172,7 +185,18 @@ public actor T3Watcher {
         defer { pollInFlight = false }
 
         relocateIfNeeded()
+        sawFreshParse = false
         let snapshot = readLatest()
+        if sawFreshParse {
+            lastGoodParseAt = Date()
+        }
+        let blind = computeBlindState()
+        if blind != isBlind {
+            isBlind = blind
+            KittyLog.write(blind
+                ? "blind=true: T3 Code writes snapshot data but nothing decodes (format changed after an update?)"
+                : "blind=false: decoding again")
+        }
         if let snapshot {
             let ready = snapshot.threads.filter { $0.needsReview }.count
             let running = snapshot.threads.filter { $0.isRunning }.count
@@ -182,7 +206,32 @@ public actor T3Watcher {
                 KittyLog.write("snapshot seq=\(snapshot.sequence) ready=\(ready) running=\(running) threads=\(snapshot.threads.count)")
             }
         }
-        onUpdate?(snapshot)
+        onUpdate?(snapshot, blind)
+    }
+
+    /// Blind means: a non-empty `.log` was written recently, it contains
+    /// snapshot-format records, and we have not successfully decoded anything
+    /// for five minutes. Idle logs (T3 Code closed or compacted into an
+    /// `.ldb`) never count, so this only fires when data we are meant to read
+    /// is flowing and failing.
+    private func computeBlindState() -> Bool {
+        let now = Date()
+        guard now.timeIntervalSince(lastGoodParseAt) > Self.blindAfterSeconds else { return false }
+        guard let entries = try? FileManager.default.contentsOfDirectory(
+            at: dbDirectory,
+            includingPropertiesForKeys: [.contentModificationDateKey, .fileSizeKey]
+        ) else { return false }
+        let logs = entries
+            .filter { $0.pathExtension == "log" }
+            .sorted { modificationDate($0) > modificationDate($1) }
+        guard let newest = logs.first,
+              (try? newest.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0 > 0
+        else { return false }
+        let mtime = modificationDate(newest)
+        let age = now.timeIntervalSince(mtime)
+        guard age >= 0, age < Self.freshWindowSeconds else { return false }
+        guard let bytes = T3Parsing.readBounded(newest, limitBytes: 512 * 1024) else { return false }
+        return T3Parsing.containsShellSignature(bytes)
     }
 
     // MARK: - Reading the LevelDB log
@@ -220,6 +269,7 @@ public actor T3Watcher {
                    parsed.sequence >= (previous?.snapshot?.sequence ?? -1) {
                     snapshot = parsed
                     cache[url.path] = Cached(size: size, mtime: mtime, snapshot: parsed)
+                    sawFreshParse = true
                 } else if let old = previous?.snapshot {
                     // No snapshot in the tail (or a partial write). Keep the
                     // last good state and retry on the next tick.
@@ -227,6 +277,7 @@ public actor T3Watcher {
                 } else if start > 0, let full = T3Parsing.parseLog(at: url, from: 0) {
                     snapshot = full
                     cache[url.path] = Cached(size: size, mtime: mtime, snapshot: full)
+                    sawFreshParse = true
                 } else {
                     snapshot = nil
                 }
@@ -245,6 +296,7 @@ public actor T3Watcher {
             best = lastKnownSnapshot
         } else {
             best = parseSSTableFallback()
+            if best != nil { sawFreshParse = true }
         }
         guard let snapshot = best else { return nil }
         let visits = readThreadVisits()
@@ -371,9 +423,8 @@ public actor T3Watcher {
                   cached.size == ((try? table.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? -1),
                   cached.snapshot != nil
             else {
-                guard let bytes = T3Parsing.readBounded(table, limitBytes: T3Parsing.maxLogBytes) else { continue }
-                guard let start = T3Parsing.find(bytes, T3Parsing.marker),
-                      let snapshot = T3Parsing.decodeSnapshot(Array(bytes[start...]))
+                guard let bytes = T3Parsing.readBounded(table, limitBytes: T3Parsing.maxLogBytes),
+                      let snapshot = T3Parsing.decodeSnapshotValue(bytes)
                 else { continue }
                 let size = (try? table.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
                 cache[table.path] = Cached(

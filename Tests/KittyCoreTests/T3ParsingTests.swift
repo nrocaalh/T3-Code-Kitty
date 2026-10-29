@@ -278,3 +278,116 @@ final class T3ParsingTests: XCTestCase {
         XCTAssertFalse(thread(completed: now, visited: nil).isReviewedByVisit)
     }
 }
+
+// MARK: - IndexedDB value decoding (Chromium wrappers)
+
+extension T3ParsingTests {
+
+    // varint uncompressed length + one literal run + one copy: "hellohello"
+    func testSnappyDecompressLiteralRun() {
+        let stream: [UInt8] = [10, (5 - 1) << 2, 0x68, 0x65, 0x6C, 0x6C, 0x6F,
+                               (1 << 2) | 1, 5, // copy 5 bytes from distance 5
+                               ]
+        XCTAssertEqual(T3Parsing.snappyDecompress(stream), Array("hellohello".utf8))
+    }
+
+    func testSnappyDecompressRejectsBadStreams() {
+        XCTAssertNil(T3Parsing.snappyDecompress([]))
+        // Declared longer than the data provides.
+        XCTAssertNil(T3Parsing.snappyDecompress([200, 1, (2 << 2), 0x61, 0x62]))
+        // Copy distance larger than the output produced so far.
+        XCTAssertNil(T3Parsing.snappyDecompress([4, (2 << 2), 0x61, 5, 0]))
+    }
+
+    // Real-world shape: Blink wraps the SSV of the shell snapshot as
+    // `FF 11 02` + Snappy, and the JSON is a one-byte (Latin-1) V8 string.
+    private var wrappedLatin1Value: [UInt8] { [
+        0xe9, 0x22, 0xff, 0x11, 0x02, 0xb4, 0x01, 0xf0, 0xb3, 0xff, 0x15, 0xfe, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xff, 0x10, 0x22, 0xa0,
+        0x01, 0x7b, 0x22, 0x73, 0x63, 0x68, 0x65, 0x6d, 0x61, 0x56, 0x65, 0x72, 0x73, 0x69,
+        0x6f, 0x6e, 0x22, 0x3a, 0x33, 0x2c, 0x22, 0x65, 0x6e, 0x76, 0x69, 0x72, 0x6f, 0x6e,
+        0x6d, 0x65, 0x6e, 0x74, 0x49, 0x64, 0x22, 0x3a, 0x22, 0x65, 0x31, 0x22, 0x2c, 0x22,
+        0x73, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x22, 0x3a, 0x7b, 0x22, 0x73, 0x6e,
+        0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x53, 0x65, 0x71, 0x75, 0x65, 0x6e, 0x63, 0x65,
+        0x22, 0x3a, 0x34, 0x32, 0x2c, 0x22, 0x74, 0x68, 0x72, 0x65, 0x61, 0x64, 0x73, 0x22,
+        0x3a, 0x5b, 0x7b, 0x22, 0x69, 0x64, 0x22, 0x3a, 0x22, 0x74, 0x31, 0x22, 0x2c, 0x22,
+        0x74, 0x69, 0x74, 0x6c, 0x65, 0x22, 0x3a, 0x22, 0x70, 0x6f, 0x64, 0x72, 0xed, 0x61,
+        0x20, 0xe1, 0x72, 0x62, 0x6f, 0x6c, 0x20, 0xf1, 0x22, 0x2c, 0x22, 0x73, 0x74, 0x61,
+        0x74, 0x75, 0x73, 0x22, 0x3a, 0x22, 0x63, 0x6f, 0x6d, 0x70, 0x6c, 0x65, 0x74, 0x65,
+        0x64, 0x22, 0x2c, 0x22, 0x73, 0x65, 0x73, 0x73, 0x69, 0x6f, 0x6e, 0x22, 0x3a, 0x6e,
+        0x75, 0x6c, 0x6c, 0x7d, 0x5d, 0x7d, 0x7d,
+    ] }
+
+    func testDecodeSnapshotValueUnwrapsSnappyAndLatin1() {
+        let snapshot = T3Parsing.decodeSnapshotValue(wrappedLatin1Value)
+        XCTAssertNotNil(snapshot)
+        XCTAssertEqual(snapshot?.sequence, 42)
+        XCTAssertEqual(snapshot?.environmentId, "e1")
+        XCTAssertEqual(snapshot?.threads.count, 1)
+        XCTAssertEqual(snapshot?.threads.first?.title, "podría árbol ñ")
+        XCTAssertEqual(snapshot?.threads.first?.status, "ready")
+    }
+
+    // Uncompressed one-byte (Latin-1) V8 string.
+    func testDecodeSnapshotValueRawLatin1() {
+        let raw = Array(wrappedLatin1Value.dropFirst(5 + 14)) // drop prefix, wrapper and snappy framing
+        let value: [UInt8] = [
+            0xff, 0x15, 0xfe,
+        ] + .init(repeating: 0, count: 12) + [
+            0xff, 0x10, 0x22, 0xa0, 0x01,
+        ] + raw
+        let snapshot = T3Parsing.decodeSnapshotValue(value)
+        XCTAssertEqual(snapshot?.sequence, 42)
+        XCTAssertEqual(snapshot?.threads.first?.title, "podría árbol ñ")
+    }
+
+    // Any character above U+00FF (emoji) makes V8 store the JSON as UTF-16LE.
+    func testDecodeSnapshotValueUTF16() {
+        let utf16JSON = Array("{\"schemaVersion\":3,\"environmentId\":\"e1\",\"snapshot\":{\"snapshotSequence\":7,\"threads\":[{\"id\":\"t2\",\"title\":\"hola 🐱\",\"status\":\"running\"}]}}".utf16)
+        var value: [UInt8] = [0xff, 0x11, 0x02]
+        let byteCount = utf16JSON.count * 2
+        // Snappy: varint uncompressed length + one literal run.
+        var length = UInt32(byteCount)
+        while true {
+            let byte = UInt8(length & 0x7F)
+            length >>= 7
+            if length == 0 { value.append(byte); break }
+            value.append(byte | 0x80)
+        }
+        if byteCount <= 60 {
+            value.append(UInt8((byteCount - 1) << 2))
+        } else {
+            value.append(UInt8(61 << 2))
+            value.append(UInt8((byteCount - 1) & 0xFF))
+            value.append(UInt8(((byteCount - 1) >> 8) & 0xFF))
+        }
+        for unit in utf16JSON {
+            value.append(UInt8(unit & 0xFF))
+            value.append(UInt8(unit >> 8))
+        }
+        let snapshot = T3Parsing.decodeSnapshotValue(value)
+        XCTAssertEqual(snapshot?.sequence, 7)
+        XCTAssertEqual(snapshot?.threads.first?.title, "hola 🐱")
+        XCTAssertEqual(snapshot?.threads.first?.status, "running")
+    }
+
+    func testDecodeSnapshotValueRejectsGarbage() {
+        XCTAssertNil(T3Parsing.decodeSnapshotValue(Array("not json at all".utf8)))
+        XCTAssertNil(T3Parsing.decodeSnapshotValue([0xFF, 0x11, 0x02, 0x01, 0x02, 0x03]))
+    }
+}
+
+// MARK: - Shell signature (blind detection)
+
+extension T3ParsingTests {
+    func testContainsShellSignature() {
+        let shell = Array(#"{"schemaVersion":3,"environmentId":"e1","snapshot":{"snapshotSequence":9}}"#.utf8)
+        XCTAssertTrue(T3Parsing.containsShellSignature(shell))
+        let config = Array(#"{"schemaVersion":1,"environmentId":"e1","cwd":"/root","refs":[]}"#.utf8)
+        XCTAssertFalse(T3Parsing.containsShellSignature(config))
+        let utf16 = Array("{\"snapshot\":{\"snapshotSequence\":9}}".utf16)
+            .flatMap { [UInt8($0 & 0xFF), UInt8($0 >> 8)] }
+        XCTAssertTrue(T3Parsing.containsShellSignature(utf16))
+        XCTAssertFalse(T3Parsing.containsShellSignature([]))
+    }
+}
